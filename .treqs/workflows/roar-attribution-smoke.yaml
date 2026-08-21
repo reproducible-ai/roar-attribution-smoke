@@ -26,6 +26,17 @@ versions:
 setup:
   command: |
     export PATH="$HOME/.local/bin:/opt/pytorch/bin:$PATH"
+    # roar deliberately does not create storage: the destination repo and its
+    # visibility are the operator's to set, so make it exist first.
+    python -m pip install --quiet huggingface_hub
+    python - <<'PY'
+    import os
+    from huggingface_hub import HfApi
+    HfApi(token=os.environ["HF_TOKEN"]).create_repo(
+        "reproducible-ai/roar-attribution-smoke",
+        repo_type="model", private=False, exist_ok=True)
+    print("hf destination ready")
+    PY
     uv tool install --force roar-cli==0.4.4
     echo "=== roar actually used from here on ==="
     which roar
