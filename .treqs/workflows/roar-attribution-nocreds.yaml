@@ -1,0 +1,64 @@
+name: roar attribution smoke (no delegated creds)
+
+# Artificial end-to-end check of the publish path: report the toolchain the host
+# actually provides, install a known roar, produce a tiny artifact, label it, and
+# publish it. The point is the publish step -- whether the resulting artifact is
+# attributed to the project or lands anonymously.
+#
+# roar is installed into its own isolated tool environment rather than the
+# workload's, so roar's own dependency closure stays out of what gets recorded.
+
+secrets:
+  - HF_TOKEN
+
+versions:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== roar as shipped by the host image ==="
+    which -a roar || echo "roar: not on PATH"
+    roar --version || true
+    echo "=== python ==="
+    python -V
+    echo "=== uv ==="
+    uv --version || echo "uv: absent"
+  trace: off
+
+setup:
+  command: |
+    export PATH="$HOME/.local/bin:/opt/pytorch/bin:$PATH"
+    uv tool install --force roar-cli==0.4.4
+    echo "=== roar actually used from here on ==="
+    which roar
+    roar --version
+    roar tracer use preload
+    roar tracer
+    roar init || true
+  trace: off
+
+train:
+  command: |
+    export PATH="$HOME/.local/bin:/opt/pytorch/bin:$PATH"
+    mkdir -p out
+    roar run -n train -- python step.py out/artifact.txt
+  trace: off
+
+label:
+  command: |
+    export PATH="$HOME/.local/bin:/opt/pytorch/bin:$PATH"
+    roar label set artifact out/artifact.txt model.name=roar-attribution-smoke model.version=1
+  trace: off
+
+publish:
+  command: |
+    export PATH="$HOME/.local/bin:/opt/pytorch/bin:$PATH"
+    echo "=== toolchain in the publishing step ==="
+    which roar
+    roar --version
+    echo "=== delegated publication env (names only) ==="
+    env | grep -o '^ROAR_DELEGATED_[A-Z_]*' | sort || echo "none set"
+    echo "=== endpoint ==="
+    echo "GLAAS_URL=${GLAAS_URL:-unset}"
+    echo "=== publishing ==="
+    roar status --untracked-dirs
+    roar put out/artifact.txt hf://reproducible-ai/roar-attribution-smoke --public --yes --no-tag -m "roar attribution smoke test"
+  trace: off
