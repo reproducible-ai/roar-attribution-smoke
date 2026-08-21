@@ -1,0 +1,57 @@
+name: roar attribution smoke
+
+# Artificial end-to-end check of the publish path: report the toolchain the host
+# actually provides, produce a tiny artifact, label it, and publish it. The point
+# is the publish step -- whether the resulting artifact is attributed to the
+# project or lands anonymously.
+
+secrets:
+  - HF_TOKEN
+
+versions:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== roar ==="
+    which -a roar || echo "roar: not on PATH"
+    roar --version || true
+    echo "=== python ==="
+    python -V
+    which -a python || true
+    echo "=== uv ==="
+    uv --version || echo "uv: absent"
+    echo "=== delegated publication env (names only) ==="
+    env | grep -o '^ROAR_DELEGATED_[A-Z_]*' | sort || echo "none set"
+    echo "=== glaas endpoint ==="
+    echo "GLAAS_URL=${GLAAS_URL:-unset}"
+    echo "ROAR_GLAAS__URL=${ROAR_GLAAS__URL:-unset}"
+  trace: off
+
+setup:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar tracer use preload
+    roar tracer
+    roar init || true
+  trace: off
+
+train:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    mkdir -p out
+    roar run -n train -- python step.py out/artifact.txt
+  trace: off
+
+label:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar label set artifact out/artifact.txt model.name=roar-attribution-smoke model.version=1
+  trace: off
+
+publish:
+  # Publish this step's artifact under the project's identity, not anonymously.
+  glaas_creds: true
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar status --untracked-dirs
+    roar put out/artifact.txt hf://reproducible-ai/roar-attribution-smoke --public --yes --no-tag -m "roar attribution smoke test"
+  trace: off
