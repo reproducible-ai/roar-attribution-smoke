@@ -1,0 +1,21 @@
+name: roar path probe
+
+probe:
+  command: |
+    echo "=== PATH as the agent gives it ==="
+    echo "PATH=$PATH"
+    echo "=== every roar on that PATH ==="
+    which -a roar || echo "none"
+    echo "=== each known location, independently ==="
+    for p in /usr/local/bin/roar /opt/pytorch/bin/roar; do
+      if [ -e "$p" ]; then
+        printf '%s -> ' "$p"; "$p" --version 2>&1 | head -1
+        printf '  resolves to: '; readlink -f "$p"
+      else
+        echo "$p -> absent"
+      fi
+    done
+    echo "=== what a campaign-style PATH picks ==="
+    export PATH=/opt/pytorch/bin:$PATH
+    printf 'after export PATH=/opt/pytorch/bin:$PATH -> '; roar --version
+  trace: off
