@@ -1,0 +1,24 @@
+name: broker capability probe
+
+# Does the agent obtain a delegated GLaaS capability at all? Declares glaas_creds
+# but publishes nothing, so it needs no HF token and no destination repo. If the
+# capability is issued the broker injects its endpoint and scope metadata here.
+
+broker:
+  glaas_creds: true
+  command: |
+    echo "=== roar as the AGENT resolves it (not as a stage PATH exports it) ==="
+    command -v roar
+    roar --version
+    echo "=== delegated publication env (names only) ==="
+    env | grep -o '^ROAR_DELEGATED_[A-Z_]*' | sort || echo "  none set"
+    echo "=== broker endpoint present? ==="
+    echo "GLAAS_URL=${GLAAS_URL:+set}${GLAAS_URL:-unset}"
+    echo "ROAR_GLAAS__URL=${ROAR_GLAAS__URL:+set}${ROAR_GLAAS__URL:-unset}"
+    echo "=== broker health ==="
+    if [ -n "${GLAAS_URL:-}" ]; then
+      curl -s -o /dev/null -w '  loopback health -> HTTP %{http_code}\n' "$GLAAS_URL/api/v1/health" || echo "  curl failed"
+    else
+      echo "  no endpoint to probe"
+    fi
+  trace: off
