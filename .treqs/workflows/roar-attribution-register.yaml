@@ -23,7 +23,8 @@ setup:
 train:
   command: |
     mkdir -p out
-    roar run -n train -- python step.py out/artifact.txt
+    NONCE="$(date -u +%Y%m%dT%H%M%S%N)"
+    roar run -n train -- python step.py out/artifact.txt "$NONCE"
   trace: off
 
 label:
