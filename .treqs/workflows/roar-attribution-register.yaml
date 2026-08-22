@@ -15,6 +15,9 @@ setup:
     roar --version
     roar tracer use preload
     roar init || true
+    # The agent wipes git credentials after cloning, so roar cannot push its
+    # tags back to origin. Registration does not need them.
+    roar config set git.push_tags_on_register never
   trace: off
 
 train:
