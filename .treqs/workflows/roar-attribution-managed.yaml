@@ -1,0 +1,44 @@
+name: roar attribution smoke (managed environment)
+
+# The intended shape: the agent provisions the Python environment and installs
+# roar into it, so the roar the agent resolves for the broker version gate is the
+# same roar the task runs. Nothing here depends on what the host image ships.
+
+secrets:
+  - HF_TOKEN
+
+environment:
+  python:
+    install_roar: true
+
+setup:
+  command: |
+    echo "=== roar as the agent resolves it ==="
+    command -v roar
+    roar --version
+    python -V
+    roar tracer use preload
+    roar init || true
+  trace: off
+
+train:
+  command: |
+    mkdir -p out
+    roar run -n train -- python step.py out/artifact.txt
+  trace: off
+
+label:
+  command: |
+    roar label set artifact out/artifact.txt model.name=roar-attribution-smoke model.version=1
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    command -v roar
+    roar --version
+    echo "=== delegated env (names only) ==="
+    env | grep -o '^ROAR_DELEGATED_[A-Z_]*' | sort || echo "  none set"
+    roar status --untracked-dirs
+    roar put out/artifact.txt hf://reproducible-ai/roar-attribution-smoke --public --yes --no-tag -m "roar attribution smoke test"
+  trace: off
