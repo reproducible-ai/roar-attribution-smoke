@@ -17,7 +17,7 @@ setup:
     grep -Eq '^include-system-site-packages = false$' /opt/check-venv/pyvenv.cfg
     echo "=== patched roar for this row ==="
     uv tool install --force --with huggingface-hub \
-      https://github.com/reproducible-ai/roar-attribution-smoke/releases/download/wheel-hf-fix/roar_cli-0.4.4-cp310-abi3-linux_x86_64.whl
+      https://github.com/reproducible-ai/roar-attribution-smoke/releases/download/wheel-hf-fix/roar_cli-0.4.4-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
     command -v roar
     roar --version
     roar tracer use preload
