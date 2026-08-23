@@ -1,0 +1,49 @@
+name: hf source_type fix check
+
+# Publishes to HF under delegated credentials with a patched roar, to see whether
+# the artifact registers with its source rather than being skipped.
+
+secrets:
+  - HF_TOKEN
+
+setup:
+  command: |
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+    command -v uv
+    echo "=== image roar (what the agent gates on) ==="
+    env PATH=/usr/local/bin:/usr/bin:/bin roar --version
+    echo "=== isolated workload venv ==="
+    uv venv --python /opt/pytorch/bin/python /opt/check-venv
+    grep -Eq '^include-system-site-packages = false$' /opt/check-venv/pyvenv.cfg
+    echo "=== patched roar for this row ==="
+    uv tool install --force --with huggingface-hub \
+      https://github.com/reproducible-ai/roar-attribution-smoke/releases/download/wheel-hf-fix/roar_cli-0.4.4-cp310-abi3-linux_x86_64.whl
+    command -v roar
+    roar --version
+    roar tracer use preload
+    roar init || true
+  trace: off
+
+train:
+  command: |
+    export PATH="/opt/check-venv/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+    mkdir -p out
+    NONCE="$(date -u +%Y%m%dT%H%M%S%N)"
+    roar run -n train -- python step.py out/artifact.txt "$NONCE"
+  trace: off
+
+label:
+  command: |
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+    roar label set artifact out/artifact.txt model.name=hf-source-type-check model.version=1
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+    command -v roar
+    roar --version
+    roar status --untracked-dirs
+    roar put out/artifact.txt hf://reproducible-ai/roar-attribution-smoke --public --yes --no-tag -m "hf source_type fix check"
+  trace: off
