@@ -1,0 +1,50 @@
+name: roar 0.4.5 release check
+
+# Validates the published 0.4.5 wheel on real compute: that it ships its tracer
+# backend, and that a delegated publish to HF registers the artifact instead of
+# silently skipping it.
+
+secrets:
+  - HF_TOKEN
+
+setup:
+  command: |
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+    command -v uv
+    echo "=== image roar (what the agent gates on) ==="
+    env PATH=/usr/local/bin:/usr/bin:/bin roar --version
+    echo "=== isolated workload venv ==="
+    uv venv --python /opt/pytorch/bin/python /opt/check-venv
+    grep -Eq '^include-system-site-packages = false$' /opt/check-venv/pyvenv.cfg
+    echo "=== install 0.4.5 from PyPI ==="
+    uv tool install --force --with huggingface-hub roar-cli==0.4.5
+    command -v roar
+    roar --version
+    echo "=== the wheel must ship its tracer backend ==="
+    roar tracer use preload
+    roar tracer
+    roar init || true
+  trace: off
+
+train:
+  command: |
+    export PATH="/opt/check-venv/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+    mkdir -p out
+    NONCE="$(date -u +%Y%m%dT%H%M%S%N)"
+    roar run -n train -- python step.py out/artifact.txt "$NONCE"
+  trace: off
+
+label:
+  command: |
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+    roar label set artifact out/artifact.txt model.name=roar-045-release-check model.version=1
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+    roar --version
+    roar status --untracked-dirs
+    roar put out/artifact.txt hf://reproducible-ai/roar-attribution-smoke --public --yes --no-tag -m "roar 0.4.5 release check"
+  trace: off
