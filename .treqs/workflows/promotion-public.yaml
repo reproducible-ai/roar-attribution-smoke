@@ -1,0 +1,46 @@
+name: promotion check (public)
+
+# Answers "attributed or anonymous" without needing a storage destination: the
+# broker's business is lineage registration, so register is the operation that
+# carries attribution. Uses the managed environment so the roar the agent
+# resolves is the roar the task runs.
+
+environment:
+  python:
+    install_roar: true
+
+setup:
+  command: |
+    command -v roar
+    roar --version
+    roar tracer use preload
+    roar init || true
+    # The agent wipes git credentials after cloning, so roar cannot push its
+    # tags back to origin. Registration does not need them.
+    roar config set git.push_tags_on_register never
+  trace: off
+
+train:
+  command: |
+    mkdir -p out
+    
+    roar run -n train -- python step.py out/artifact.txt
+  trace: off
+
+label:
+  command: |
+    roar label set artifact out/artifact.txt model.name=roar-attribution-smoke model.version=1
+  trace: off
+
+register:
+  glaas_creds: true
+  command: |
+    echo "=== toolchain ==="
+    command -v roar
+    roar --version
+    echo "=== delegated env (names only) ==="
+    env | grep -o '^ROAR_DELEGATED_[A-Z_]*' | sort || echo "  none set"
+    echo "=== registering lineage ==="
+    roar status --untracked-dirs
+    roar register --public --yes
+  trace: off
