@@ -1,0 +1,69 @@
+name: dag tee isolate
+
+# dag-tee-evaluate.yaml reproduced row 020: on the agent, a step of the form
+#   roar run -n evaluate -- sh -c 'python3 ... | tee out/evaluation.txt'
+# records in:0 out:0, exits 0, and says nothing. The same shape on a laptop records
+# in:1 out:1. Pure-shell steps in the same session captured fine, so the loss is not
+# the agent per se.
+#
+# Three elements are stacked in that command: a `sh -c` wrapper, a pipe into `tee`,
+# and a Python interpreter. This runs each combination so the responsible one is
+# named rather than guessed. The Python step took 35.5s where the shell steps took
+# 4ms, so the interpreter is the first suspect.
+#
+# Verbosity is raised to debug so roar lists the files it filtered — a file that was
+# seen and dropped looks nothing like a file that was never seen.
+
+setup:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar --version
+    roar tracer use preload
+    roar tracer
+    roar config set output.verbosity debug || true
+    echo "=== interpreters ==="
+    command -v python3; python3 -V
+    roar init || true
+  trace: off
+
+# A: tee, no Python. Isolates the pipe + tee.
+a-tee-noshell-nopython:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n a-tee-nopython -- sh -c 'echo a-line | tee out/a.txt'
+  trace: off
+
+# B: Python, no pipe, no tee — plain redirect by the shell.
+b-python-redirect:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n b-python-redirect -- sh -c 'python3 -c "print(\"b-line\")" > out/b.txt'
+  trace: off
+
+# C: Python writes the file itself. No shell, no pipe, no tee.
+c-python-direct:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n c-python-direct -- python3 -c "open('out/c.txt','w').write('c-line')"
+  trace: off
+
+# D: the row 020 shape in full — sh -c, pipe, tee, Python.
+d-python-tee:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n d-python-tee -- sh -c 'python3 -c "print(\"d-line\")" | tee out/d.txt'
+  trace: off
+
+report:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== files actually on disk ==="
+    ls -l out/
+    echo "=== what roar recorded ==="
+    roar dag
+    for s in a-tee-nopython b-python-redirect c-python-direct d-python-tee; do
+      echo "--- $s"
+      roar show "@$(roar log | grep -c OK)" >/dev/null 2>&1 || true
+    done
+    roar log
+  trace: off
