@@ -1,0 +1,68 @@
+name: dag tee evaluate
+
+# Does a `roar run -n <step> -- sh -c '... | tee <file>'` step reach the PUBLISHED
+# DAG as the producer of that file?
+#
+# Row 020 (GloVe, DAG 985fa637…) says no. Its `evaluate` step ran under the agent,
+# exited 0, and roar recorded it locally as @7 — the task log shows
+# `roar: done · 24.0s (trace 23.4s + post 0.6s, exit 0)`. But the published DAG has
+# only seven `roar run` jobs plus the put, and `evaluate` is the one absent. The
+# file it wrote is in the DAG as an INPUT of the bundle step and as a published
+# artifact, with no job producing it, which is what fails the strict Clean-DAG gate.
+#
+# Traced locally on roar 0.4.5 under preload, the same step shape captures the file
+# correctly and `roar dag` shows `evaluate in:1 out:1`. So the loss is not in the
+# tracer. This workflow reproduces the structure — a tee step whose output a later
+# step consumes — with commands that finish in seconds instead of three hours.
+#
+# The steps mirror row 020's shapes deliberately: same `sh -c` wrapper, same
+# redirect/pipe forms, same consume-in-a-later-step relationship. Only the payloads
+# are dummies.
+
+setup:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar --version
+    roar tracer use preload
+    roar tracer
+    roar init || true
+  trace: off
+
+# Plain redirect, for contrast: the shell writes the file, not a child process.
+vocabulary:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n vocabulary -- sh -c 'echo vocab-line > out/vocab.txt'
+  trace: off
+
+# Direct write by the traced binary itself — the control.
+train:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n train -- sh -c 'echo vectors-line > out/vectors.txt'
+  trace: off
+
+# The step under test: the writer is `tee`, a grandchild on the far side of a pipe.
+evaluate:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n evaluate -- sh -c 'python3 -c "print(\"Total accuracy: 22.82%  (4068/17827)\")" | tee out/evaluation.txt'
+  trace: off
+
+# Consumes all three, exactly as row 020's bundle did. In that row this step's
+# inputs DID include evaluation.txt — so the file was visible to capture here even
+# though no job claimed to produce it.
+bundle:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n bundle -- tar -czf out/bundle.tar.gz out/vectors.txt out/evaluation.txt out/vocab.txt
+  trace: off
+
+report:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== local job log, before publication ==="
+    roar log
+    echo "=== local DAG, before publication ==="
+    roar dag
+  trace: off
