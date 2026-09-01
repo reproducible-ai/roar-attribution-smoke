@@ -14,17 +14,22 @@ setup:
   command: |
     set -eu
     echo "=== host ==="
-    hostname; nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+    hostname
+    nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
     echo "=== roar from the image ==="
     env PATH=/usr/local/bin:/usr/bin:/bin roar --version | grep -F '0.4.5'
     which -a roar
     echo "=== hf destination ==="
     /opt/pytorch/bin/python -m pip install --quiet huggingface_hub
-    HF_TOKEN="$HF_TOKEN" /opt/pytorch/bin/python -c "
-import os
-from huggingface_hub import HfApi
-HfApi(token=os.environ['HF_TOKEN']).create_repo('reproducible-ai/roar-attribution-smoke', repo_type='model', private=False, exist_ok=True)
-print('hf destination ready')"
+    cat > /tmp/mkrepo.py <<'PY'
+    import os
+    from huggingface_hub import HfApi
+    HfApi(token=os.environ["HF_TOKEN"]).create_repo(
+        "reproducible-ai/roar-attribution-smoke",
+        repo_type="model", private=False, exist_ok=True)
+    print("hf destination ready")
+    PY
+    /opt/pytorch/bin/python /tmp/mkrepo.py
   trace: off
 
 capture:
