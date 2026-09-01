@@ -1,0 +1,34 @@
+name: Blackwell production qualification
+
+secrets:
+  - HF_TOKEN
+
+setup:
+  command: |
+    set -eu
+    env PATH=/usr/local/bin:/usr/bin:/bin roar --version | grep -F '0.4.5'
+    grep -F 'include-system-site-packages = false' /opt/pytorch/pyvenv.cfg
+    cat /etc/reproai/roar-build-info
+    cat /etc/reproai/torch-build-info
+    /opt/pytorch/bin/python -c 'import importlib.metadata as m, torch; print("torch_dist=" + m.version("torch")); print("torch_cuda=" + str(torch.version.cuda)); print("arch=" + str(torch.cuda.get_arch_list()))'
+    nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+  trace: off
+
+capture:
+  command: |
+    set -eu
+    export PATH=/usr/local/bin:/opt/pytorch/bin:/usr/bin:/bin
+    roar tracer use preload
+    roar init
+    roar run -n blackwell_cuda -- python blackwell_probe.py out/blackwell.txt
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    set -eu
+    export PATH=/usr/local/bin:/opt/pytorch/bin:/usr/bin:/bin
+    roar status --untracked-dirs
+    roar label set artifact out/blackwell.txt model.name=blackwell-production-qualification model.version=1
+    roar put out/blackwell.txt hf://reproducible-ai/roar-attribution-smoke --public --yes --no-tag -m "Blackwell production qualification"
+  trace: off
