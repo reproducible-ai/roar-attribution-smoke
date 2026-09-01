@@ -1,0 +1,54 @@
+name: Dedicated host - lineage capture and delegated put
+
+# Tests the combination that has not been run before: a DEDICATED (self-registered)
+# host doing a real roar capture AND a delegated GLaaS-brokered publish.
+# On-demand targets have done this; a dedicated one has not.
+#
+# Uses the roar the AMI ships (0.4.5). Does not install roar - stack.md is explicit
+# that the image's roar is the one to use.
+
+secrets:
+  - HF_TOKEN
+
+setup:
+  command: |
+    set -eu
+    echo "=== host ==="
+    hostname; nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+    echo "=== roar from the image ==="
+    env PATH=/usr/local/bin:/usr/bin:/bin roar --version | grep -F '0.4.5'
+    which -a roar
+    echo "=== hf destination ==="
+    /opt/pytorch/bin/python -m pip install --quiet huggingface_hub
+    HF_TOKEN="$HF_TOKEN" /opt/pytorch/bin/python -c "
+import os
+from huggingface_hub import HfApi
+HfApi(token=os.environ['HF_TOKEN']).create_repo('reproducible-ai/roar-attribution-smoke', repo_type='model', private=False, exist_ok=True)
+print('hf destination ready')"
+  trace: off
+
+capture:
+  command: |
+    set -eu
+    export PATH=/usr/local/bin:/opt/pytorch/bin:/usr/bin:/bin
+    roar tracer use preload
+    roar tracer
+    roar init || true
+    mkdir -p out
+    roar run -n dedicated_capture -- python step.py out/artifact.txt "dedicated-$(date +%s)"
+    echo "=== lineage present? ==="
+    roar status --untracked-dirs
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    set -eu
+    export PATH=/usr/local/bin:/opt/pytorch/bin:/usr/bin:/bin
+    echo "=== delegated publication env (names only) ==="
+    env | grep -o '^ROAR_DELEGATED_[A-Z_]*' | sort || echo "none set"
+    echo "GLAAS_URL=${GLAAS_URL:-unset}"
+    roar label set artifact out/artifact.txt model.name=dedicated-lineage-put model.version=1
+    roar put out/artifact.txt hf://reproducible-ai/roar-attribution-smoke --public --yes --no-tag -m "dedicated host lineage + delegated put"
+    echo "PUT_OK"
+  trace: off
