@@ -1,0 +1,35 @@
+name: Dedicated target control probe
+
+# Run this repeatedly against ONE dedicated host to answer:
+#   - is the job working directory fresh per training request?
+#   - does anything a previous TR wrote leak into the next one?
+# Two scopes are checked: the job's own cwd, and a fixed host path (/tmp).
+
+probe:
+  command: |
+    set -eu
+    echo "host=$(hostname)"
+    echo "cwd=$(pwd)"
+    echo "whoami=$(whoami)"
+    echo "=== cwd contents ==="
+    ls -la . | head -25
+    echo "=== leak check: job cwd ==="
+    if [ -e ./TR_MARKER ]; then
+      echo "CWD_LEAK=yes"
+      echo "  previous TR left: $(cat ./TR_MARKER)"
+    else
+      echo "CWD_LEAK=no"
+    fi
+    date -u +%FT%TZ > ./TR_MARKER
+    echo "=== leak check: host /tmp ==="
+    if [ -e /tmp/reproai_tr_marker ]; then
+      echo "TMP_LEAK=yes"
+      echo "  previous TR left: $(cat /tmp/reproai_tr_marker)"
+    else
+      echo "TMP_LEAK=no"
+    fi
+    date -u +%FT%TZ > /tmp/reproai_tr_marker
+    echo "=== uptime / agent ==="
+    uptime
+    echo "PROBE_OK"
+  trace: off
