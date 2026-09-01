@@ -1,0 +1,43 @@
+name: Multi-GPU target qualification
+
+# Answers three things about a target that has never launched:
+#   1. does it launch at all (capacity + AMI + subnet + SG config valid)
+#   2. does the OS see every GPU the instance type promises
+#   3. does torch see them, with an arch list covering this GPU's compute cap
+#
+# setup-only: no secrets, no capture, no publish. The launch itself is the test.
+
+setup:
+  command: |
+    set -eu
+    echo "=== instance ==="
+    TOK=$(curl -sX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
+    for f in instance-type instance-id placement/availability-zone; do
+      printf '%s=' "$f"
+      curl -s -H "X-aws-ec2-metadata-token: $TOK" "http://169.254.169.254/latest/meta-data/$f"; echo
+    done
+
+    echo "=== GPUs the OS sees ==="
+    nvidia-smi --query-gpu=index,name,compute_cap,memory.total --format=csv,noheader
+    echo "gpu_count=$(nvidia-smi --list-gpus | wc -l)"
+
+    echo "=== roar ==="
+    env PATH=/usr/local/bin:/usr/bin:/bin roar --version
+    cat /etc/reproai/roar-build-info 2>/dev/null || echo "(no roar-build-info)"
+
+    echo "=== torch ==="
+    /opt/pytorch/bin/python - <<'PY'
+    import torch, importlib.metadata as m
+    print("torch_dist=" + m.version("torch"))
+    print("torch_cuda=" + str(torch.version.cuda))
+    print("device_count=" + str(torch.cuda.device_count()))
+    print("arch=" + str(torch.cuda.get_arch_list()))
+    for i in range(torch.cuda.device_count()):
+        p = torch.cuda.get_device_properties(i)
+        print(f"  cuda:{i} {p.name} sm_{p.major}{p.minor} {round(p.total_memory/1024**3)}GiB")
+    # a real matmul on the last device - proves a kernel image exists for this arch
+    d = torch.cuda.device_count() - 1
+    x = torch.randn(512, 512, device=f"cuda:{d}")
+    print("matmul_ok=" + str(bool((x @ x).isfinite().all().item())))
+    PY
+  trace: off
