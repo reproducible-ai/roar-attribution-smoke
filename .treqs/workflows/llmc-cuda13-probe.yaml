@@ -18,7 +18,17 @@ probe:
     set -u
     echo "=== toolchain ==="
     nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
-    nvcc --version | tail -2
+    echo "--- where is nvcc? ---"
+    which nvcc || echo "  not on PATH"
+    ls -d /usr/local/cuda*/bin/nvcc /opt/*/bin/nvcc 2>/dev/null || true
+    find / -name nvcc -type f -maxdepth 6 2>/dev/null | head -5
+    NVCC_BIN=$(command -v nvcc || ls /usr/local/cuda*/bin/nvcc 2>/dev/null | head -1)
+    echo "NVCC_RESOLVED=${NVCC_BIN:-none}"
+    if [ -n "${NVCC_BIN:-}" ]; then
+      export PATH="$(dirname "$NVCC_BIN"):$PATH"
+      export CUDA_HOME="$(dirname "$(dirname "$NVCC_BIN")")"
+      nvcc --version | tail -2
+    fi
     echo "cuda_arch_detected=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')"
     echo "=== fetch upstream at a pinned commit ==="
     git clone --quiet --depth 1 https://github.com/karpathy/llm.c /tmp/llmc
@@ -26,7 +36,7 @@ probe:
     echo "=== does the known-bad call still exist? ==="
     grep -n "cudaMemAdvise" llmc/cuda_utils.cuh || echo "  (cudaMemAdvise absent - upstream may have fixed it)"
     echo "=== BUILD (unpatched, as published) ==="
-    make train_gpt2cu NO_MULTI_GPU=1 NO_USE_MPI=1 2>&1 | tail -30
+    make train_gpt2cu NO_MULTI_GPU=1 NO_USE_MPI=1 2>&1 | tail -40
     echo "BUILD_EXIT=${PIPESTATUS[0]}"
     if [ -x ./train_gpt2cu ]; then echo "RESULT=BUILDS_UNPATCHED"; else echo "RESULT=FAILS_UNPATCHED"; fi
   trace: off
