@@ -1,0 +1,32 @@
+name: llm.c CUDA 13 build probe
+
+# Compile-only. Does llm.c's train_gpt2.cu build under this host's nvcc?
+# No dataset, no training, no publish -- the compile IS the test.
+#
+# Known break: llmc/cuda_utils.cuh calls
+#   cudaMemAdvise(ptr, bytes, cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId)
+# CUDA 13 changed the 4th argument from an int device id to a cudaMemLocation
+# struct. Upstream PR #825 fixes it and is UNMERGED. llm.c last pushed
+# 2025-06-26, so no fix is coming.
+#
+# Built with NO_MULTI_GPU=1 NO_USE_MPI=1 -- upstream make flags, not a source
+# edit. On a single-GPU host the default build pulls in NCCL/MPI paths that a
+# one-GPU box neither needs nor may be able to link.
+
+probe:
+  command: |
+    set -u
+    echo "=== toolchain ==="
+    nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+    nvcc --version | tail -2
+    echo "cuda_arch_detected=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')"
+    echo "=== fetch upstream at a pinned commit ==="
+    git clone --quiet --depth 1 https://github.com/karpathy/llm.c /tmp/llmc
+    cd /tmp/llmc && git log -1 --format="upstream_commit=%H %ad" --date=short
+    echo "=== does the known-bad call still exist? ==="
+    grep -n "cudaMemAdvise" llmc/cuda_utils.cuh || echo "  (cudaMemAdvise absent - upstream may have fixed it)"
+    echo "=== BUILD (unpatched, as published) ==="
+    make train_gpt2cu NO_MULTI_GPU=1 NO_USE_MPI=1 2>&1 | tail -30
+    echo "BUILD_EXIT=${PIPESTATUS[0]}"
+    if [ -x ./train_gpt2cu ]; then echo "RESULT=BUILDS_UNPATCHED"; else echo "RESULT=FAILS_UNPATCHED"; fi
+  trace: off
