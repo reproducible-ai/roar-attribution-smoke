@@ -43,6 +43,9 @@ name: delegated register 403 terminal
 #
 # Nothing here trains anything. Total artifact size is a few hundred bytes.
 
+secrets:
+  - HF_TOKEN            # roar put upload
+
 setup:
   command: |
     export PATH=/opt/pytorch/bin:$PATH
