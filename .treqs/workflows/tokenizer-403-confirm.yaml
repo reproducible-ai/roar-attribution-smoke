@@ -1,0 +1,68 @@
+name: tokenizer 403 confirm
+
+# Does artifact 7ea2aa73367854f8866ad1bb782d12d4891d44e4dd77f142285d0ad891e40c7b
+# actually cause the 403, or was that identification a guess?
+#
+# It is tokenizer/tokenizer.pkl from the published nanochat bundle: the only one of
+# the four bundle members already present in GLaaS, registered 2026-05-28, three
+# months before the run that failed. The other three return 404.
+#
+# The bytes are public, so this reproduces them exactly rather than arguing about
+# them: fetch the published tarball from HF, extract that one member, and put a
+# bundle containing it under delegated credentials. Its blake3 is fixed by content,
+# so the registration will address the same artifact row.
+#
+#   403 here  -> the identification is right and a re-run of the row will fail again
+#   clean     -> the identification is wrong and the real cause is still unfound
+#
+# A second file with unique bytes rides along so a clean result cannot be a no-op.
+
+secrets:
+  - HF_TOKEN            # roar put upload
+
+setup:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    test "$(env PATH=/usr/local/bin:/usr/bin:/bin roar --version)" = "roar, version 0.4.5"
+    command -v uv >/dev/null 2>&1 || { echo "uv absent"; exit 1; }
+    uv venv --python /opt/pytorch/bin/python /opt/tok-venv
+    grep -qx 'include-system-site-packages = false' /opt/tok-venv/pyvenv.cfg
+    roar tracer use preload
+    roar init || true
+  trace: off
+
+fetch_tokenizer:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n fetch_tokenizer -- sh -c 'curl -fsSL https://huggingface.co/reproducible-ai/nanochat-depth-14/resolve/main/nanochat-depth14.tar.gz -o /tmp/nc.tar.gz && tar -xzf /tmp/nc.tar.gz -C out --strip-components=1 tokenizer/tokenizer.pkl && ls -l out/tokenizer.pkl'
+  trace: off
+
+unique_sidecar:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n unique_sidecar -- sh -c 'printf "sidecar-%s-%s\n" "$(date -u +%Y%m%dT%H%M%S%N)" "$$" > out/sidecar.txt'
+  trace: off
+
+package:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n package -- tar -czf out/tokbundle.tar.gz out/tokenizer.pkl out/sidecar.txt
+  trace: off
+
+report:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== extracted tokenizer identity (expect sha256 7ea2... no: sha256 differs from blake3) ==="
+    sha256sum out/tokenizer.pkl
+    wc -c out/tokenizer.pkl
+    roar dag
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar status --untracked-dirs
+    roar put out/tokbundle.tar.gz hf://reproducible-ai/roar-attribution-smoke \
+      --public --yes --no-tag -m "tokenizer 403 confirmation"
+  trace: off
