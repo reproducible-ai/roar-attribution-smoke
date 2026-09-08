@@ -1,0 +1,131 @@
+name: delegated register 403 abandon
+
+# Why this exists
+#
+# A full nanochat depth-14 run finished every stage -- pretrain, eval, SFT, chat eval,
+# package, label -- then uploaded a 983 MB artifact to a public HF repo and FAILED on
+# the registration that follows the upload:
+#
+#   Published 1 file(s) to hf://reproducible-ai/nanochat-depth-14
+#   Warning: Registration completed with errors:
+#     - Staged batch registration error: HTTP 403: Artifact is not readable in this registration scope
+#     - Link 704c5bad: outputs: HTTP 403: ...
+#     - Link 88bb06c1: inputs:  HTTP 403: ...
+#     (six links, inputs and outputs)
+#   Error: Registration completed with errors
+#
+# The bytes are public and the lineage does not exist -- the exact inverse of the
+# point of the campaign. That run cost $19.83 and the row is blocked on it.
+#
+# Two candidate explanations, and they call for different fixes:
+#
+#   (a) the delegated registration path 403s generally, so no delegated publish can
+#       register today; or
+#   (b) it 403s only when artifacts are byte-identical to ones a previous session
+#       staged and never finalized. nanochat ran three times on 2026-09-04 and two
+#       were cancelled, so its dataset and tokenizer artifacts had been staged twice
+#       before by sessions that never finalized. glaas-api#98 was supposed to make
+#       those reclaimable and merged 2026-08-24, well before this run.
+#
+# This workflow separates them, in about a minute and for cents, by mirroring the
+# shape of the failure rather than its scale.
+#
+#   fixed_data, fixed_tokenizer -> byte-identical on every run, so a second run
+#                                  restages exactly what the first one staged
+#   unique_model                -> unique per run, as a real trained model is
+#   package                     -> consumes all three, producing the input/output
+#                                  links that the nanochat errors named
+#   publish                     -> delegated roar put, the step that actually failed
+#
+# Read it as: run once. If publish 403s on a first, clean run, the answer is (a).
+# Run it a second time. If the first succeeded and the second 403s, the answer is (b)
+# and the reclaim path is what needs attention.
+#
+# Nothing here trains anything. Total artifact size is a few hundred bytes.
+
+setup:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    # The version the AGENT will resolve, on its own minimal PATH -- not what this
+    # stage's PATH export selects. Below 0.4.4 the broker refuses the publish task.
+    test "$(env PATH=/usr/local/bin:/usr/bin:/bin roar --version)" = "roar, version 0.4.5"
+    cat /etc/reproai/roar-build-info 2>/dev/null || echo "no roar-build-info on this image"
+    # This diagnostic runs no Python workload, but the venv is created and asserted
+    # anyway: roar sharing an interpreter with a workload puts its own closure into
+    # the freeze, and a workflow that skips the assertion teaches the wrong shape.
+    command -v uv >/dev/null 2>&1 || { echo "uv absent on this image"; exit 1; }
+    uv venv --python /opt/pytorch/bin/python /opt/diag-venv
+    grep -qx 'include-system-site-packages = false' /opt/diag-venv/pyvenv.cfg
+    roar tracer use preload
+    roar tracer
+    roar init || true
+  trace: off
+
+# Byte-identical on every run. Stands in for nanochat's downloaded corpus.
+fixed_data:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n fixed_data -- sh -c 'printf "fixed-corpus-v1\n" > out/data.txt'
+  trace: off
+
+# Also byte-identical, and consumes the first. Stands in for the trained tokenizer.
+fixed_tokenizer:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n fixed_tokenizer -- sh -c 'cat out/data.txt > out/tokenizer.txt; printf "fixed-tokenizer-v1\n" >> out/tokenizer.txt'
+  trace: off
+
+# Unique per run, as a real trained model is. If only this were registered the
+# collision hypothesis could not apply -- it is the fixed pair above that repeats.
+unique_model:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n unique_model -- sh -c 'printf "model-%s-%s\n" "$(date -u +%Y%m%dT%H%M%S%N)" "$$" > out/model.txt'
+  trace: off
+
+# Holds the session open so it can be cancelled here, mid-run. This is the state
+# nanochat's two cancelled attempts left behind: fixed_data and fixed_tokenizer
+# staged, with jobs and links pointing at them, by a session that never finalizes.
+# Membership is materialized at finalize, so these artifacts end up with none.
+hold_open:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "staged the fixed artifacts; holding for cancellation"
+    sleep 600
+  trace: off
+
+package:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar run -n package -- tar -czf out/bundle.tar.gz out/data.txt out/tokenizer.txt out/model.txt
+  trace: off
+
+label:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar label set artifact out/bundle.tar.gz model.name=delegated-register-403 model.version=1 \
+      license.id=Apache-2.0 license.name='Apache License 2.0' \
+      description='Diagnostic bundle for the delegated registration 403; not a model'
+  trace: off
+
+# The step under test. Delegated credentials, public destination, same call shape as
+# the row's publish stage. roar uploads first and registers second, which is why a
+# registration failure leaves the bytes public and no record behind -- so read the
+# upload succeeding as no evidence that the step passed.
+publish:
+  glaas_creds: true
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar status --untracked-dirs
+    roar put out/bundle.tar.gz hf://reproducible-ai/roar-attribution-smoke \
+      --public --yes --no-tag -m "delegated registration diagnostic"
+  trace: off
+
+report:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== local DAG, after publish ==="
+    roar dag
+    echo "=== local job log ==="
+    roar log
+  trace: off
