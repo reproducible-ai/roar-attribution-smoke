@@ -1,0 +1,60 @@
+name: tiktoken freeze
+
+# Does a published freeze still redact a package version whose name contains a
+# secret keyword, on roar 0.4.6?
+#
+# roar #297 narrowed the env-var rule so the STRING form survives:
+#   tiktoken==0.11.0  ->  tiktoken==0.11.0
+#
+# It did not touch json_named_secret, which matches a quoted key containing the
+# keyword followed by a quoted value:
+#   {"tiktoken": "0.11.0"}  ->  {"tiktoken": "[REDACTED]"}
+#
+# roar records packages as dict[str, str] keyed by package name, so whether the
+# published freeze survives depends on which serialization the publish path filters.
+# Verified locally against 0.4.6, that is the open question -- and reasoning about it
+# is exactly what produced a fix that passed unit tests and failed in production.
+#
+# Minimal on purpose: one dependency, one import, one publish. If the version comes
+# back redacted here, the defect is in roar's publish path and nothing about the
+# workload can be blamed.
+
+secrets:
+  - HF_TOKEN
+
+setup:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    test "$(env PATH=/usr/local/bin:/usr/bin:/bin roar --version)" = "roar, version 0.4.6"
+    cat /etc/reproai/roar-build-info
+    command -v uv >/dev/null 2>&1 || { echo "uv absent"; exit 1; }
+    uv venv --python /opt/pytorch/bin/python /opt/tik-venv
+    grep -qx 'include-system-site-packages = false' /opt/tik-venv/pyvenv.cfg
+    /usr/local/bin/uv pip install --python /opt/tik-venv/bin/python 'tiktoken==0.11.0'
+    /opt/tik-venv/bin/python -c "import importlib.metadata as m; print('INSTALLED tiktoken==' + m.version('tiktoken'))"
+    roar tracer use preload
+    roar init || true
+  trace: off
+
+use_tiktoken:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    export PATH=/opt/tik-venv/bin:$PATH
+    roar run -n use_tiktoken -- python -c "import tiktoken, importlib.metadata as m; open('out/enc.txt','w').write(str(len(tiktoken.get_encoding('cl100k_base').encode('hello'))) + ' ' + m.version('tiktoken'))"
+  trace: off
+
+report:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== what roar recorded locally, before publication ==="
+    roar show @1 --all 2>/dev/null | grep -i -A3 'tiktoken' | head -20 || roar show @1 | head -40
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar status --untracked-dirs
+    roar put out/enc.txt hf://reproducible-ai/roar-attribution-smoke \
+      --public --yes --no-tag -m "tiktoken freeze probe"
+  trace: off
