@@ -1,7 +1,7 @@
 name: tiktoken freeze
 
 # Does a published freeze still redact a package version whose name contains a
-# secret keyword, on roar 0.4.6?
+# secret keyword, on roar 0.4.7?
 #
 # roar #297 narrowed the env-var rule so the STRING form survives:
 #   tiktoken==0.11.0  ->  tiktoken==0.11.0
@@ -25,7 +25,7 @@ secrets:
 setup:
   command: |
     export PATH=/opt/pytorch/bin:$PATH
-    test "$(env PATH=/usr/local/bin:/usr/bin:/bin roar --version)" = "roar, version 0.4.6"
+    test "$(env PATH=/usr/local/bin:/usr/bin:/bin roar --version)" = "roar, version 0.4.7"
     cat /etc/reproai/roar-build-info
     command -v uv >/dev/null 2>&1 || { echo "uv absent"; exit 1; }
     uv venv --python /opt/pytorch/bin/python /opt/tik-venv
