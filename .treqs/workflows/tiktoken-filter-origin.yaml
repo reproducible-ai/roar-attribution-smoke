@@ -1,0 +1,78 @@
+name: tiktoken filter origin
+
+# roar 0.4.7 still published `"tiktoken": "[REDACTED]"` on row 024, even though the
+# record it wrote stamps `metadata.roar_version = 0.4.7`.
+#
+# Those are two different roars. `roar_version` is stamped at RECORD time by the roar
+# on the image. The redaction happens at REGISTRATION time, inside whichever roar the
+# AGENT resolves for a `glaas_creds` stage -- and per stack.md the agent's search order
+# is TREQS_AGENT_ROAR_BIN -> a roar beside the agent binary -> the job venv -> PATH,
+# none of which a stage's `export PATH=` can influence.
+#
+# Measured: 0.4.6 redacts `"tiktoken": "0.11.0"` in the serialized-JSON form and 0.4.7
+# does not. So if the agent resolves a pre-0.4.7 roar, the record is recorded by 0.4.7
+# and filtered by the old one -- which is exactly the observed symptom.
+#
+# This finds out. It reports every roar on the box and, specifically, any roar sitting
+# beside the agent binary, then does one traced tiktoken import and one delegated
+# publish so the published session view can be read back afterwards.
+
+secrets:
+  - HF_TOKEN
+
+setup:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== on-host roar (what records) ==="
+    env PATH=/usr/local/bin:/usr/bin:/bin roar --version
+    cat /etc/reproai/roar-build-info || true
+
+    echo "=== agent binary and any roar beside it (what filters) ==="
+    echo "TREQS_AGENT_ROAR_BIN=${TREQS_AGENT_ROAR_BIN:-<unset>}"
+    for a in $(command -v treqs-agent || true) \
+             /usr/local/bin/treqs-agent /opt/treqs-agent/treqs-agent \
+             /usr/bin/treqs-agent /var/lib/treqs-agent/treqs-agent; do
+      [ -e "$a" ] || continue
+      echo "AGENT $a -> $(readlink -f "$a")"
+      d=$(dirname "$(readlink -f "$a")")
+      if [ -x "$d/roar" ]; then
+        printf "  ROAR BESIDE AGENT %s -> " "$d/roar"; "$d/roar" --version 2>&1 | head -1
+      else
+        echo "  no roar beside agent in $d"
+      fi
+    done
+
+    echo "=== every roar anywhere on the box ==="
+    find / -name roar -type f -perm -u+x 2>/dev/null | while read -r p; do
+      printf '%s -> ' "$p"; "$p" --version 2>&1 | head -1
+    done
+
+    echo "=== tiktoken venv ==="
+    uv venv --python /opt/pytorch/bin/python /opt/tik-venv
+    /usr/local/bin/uv pip install --python /opt/tik-venv/bin/python 'tiktoken==0.11.0'
+    /opt/tik-venv/bin/python -c "import importlib.metadata as m; print('INSTALLED tiktoken==' + m.version('tiktoken'))"
+    roar tracer use preload
+    roar init || true
+  trace: off
+
+use_tiktoken:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    export PATH=/opt/tik-venv/bin:$PATH
+    roar run -n use_tiktoken -- python -c "import tiktoken, importlib.metadata as m; open('out/enc.txt','w').write(str(len(tiktoken.get_encoding('cl100k_base').encode('origin'))) + ' ' + m.version('tiktoken'))"
+  trace: off
+
+report:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    echo "=== what roar recorded locally, BEFORE publication ==="
+    roar show @1 --all 2>/dev/null | grep -i -B2 -A2 'tiktoken' | head -20 || true
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar status --untracked-dirs
+    roar put out/enc.txt hf://reproducible-ai/roar-attribution-smoke \
+      --public --yes --no-tag -m "tiktoken filter origin probe"
