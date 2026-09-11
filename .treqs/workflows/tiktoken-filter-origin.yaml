@@ -59,7 +59,8 @@ use_tiktoken:
   command: |
     export PATH=/opt/pytorch/bin:$PATH
     export PATH=/opt/tik-venv/bin:$PATH
-    roar run -n use_tiktoken -- python -c "import tiktoken, importlib.metadata as m; open('out/enc.txt','w').write(str(len(tiktoken.get_encoding('cl100k_base').encode('origin'))) + ' ' + m.version('tiktoken'))"
+    export PROBE_NONCE=$(date +%s)
+    roar run -n use_tiktoken -- python -c "import tiktoken, importlib.metadata as m; open('out/enc.txt','w').write(str(len(tiktoken.get_encoding('cl100k_base').encode('origin'))) + ' ' + m.version('tiktoken') + ' ' + __import__('os').environ.get('PROBE_NONCE','x'))"
   trace: off
 
 report:
