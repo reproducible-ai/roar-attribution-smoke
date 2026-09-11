@@ -1,0 +1,49 @@
+name: prod redaction control
+
+# Negative control for glaas-api #110, run against prod.
+#
+# #110 narrowed the public-view key pattern so a package name ending in a keyword
+# (`tiktoken`) keeps its version. The risk of any narrowing is that it also stops
+# redacting something it should. No existing prod session carries a credential-shaped
+# key, so this makes one.
+#
+# FAKE_API_TOKEN is a synthetic value, and roar's write-side filter will NOT remove it:
+# the name is not in the configured env-var list and the value has no provider shape, so
+# roar stores it as-is. That is the case glaas-api's read-time pass exists for. The
+# published public view must show it redacted while `tiktoken` keeps its pin.
+#
+# Both assertions have to hold in the same record. A pass that simply stopped redacting
+# would satisfy the tiktoken half and be a credential leak.
+
+secrets:
+  - HF_TOKEN
+
+setup:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    env PATH=/usr/local/bin:/usr/bin:/bin roar --version
+    uv venv --python /opt/pytorch/bin/python /opt/tik-venv
+    /usr/local/bin/uv pip install --python /opt/tik-venv/bin/python 'tiktoken==0.11.0'
+    roar tracer use preload
+    roar init || true
+  trace: off
+
+use_tiktoken:
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    export PATH=/opt/tik-venv/bin:$PATH
+    export PROBE_NONCE=$(date +%s)
+    # Synthetic. Not a credential for anything, and deliberately shaped like one.
+    export FAKE_API_TOKEN="synthetic-not-a-real-secret-$PROBE_NONCE"
+    # The program READS it, so roar records it in runtime.env_vars. The value is never
+    # written into the artifact -- only the nonce and the tiktoken version are.
+    roar run -n use_tiktoken -- python -c "import os, tiktoken, importlib.metadata as m; os.environ.get('FAKE_API_TOKEN'); open('out/enc.txt','w').write(str(len(tiktoken.get_encoding('cl100k_base').encode('control'))) + ' ' + m.version('tiktoken') + ' ' + os.environ.get('PROBE_NONCE','x'))"
+  trace: off
+
+publish:
+  glaas_creds: true
+  command: |
+    export PATH=/opt/pytorch/bin:$PATH
+    roar status --untracked-dirs
+    roar put out/enc.txt hf://reproducible-ai/roar-attribution-smoke \
+      --public --yes --no-tag -m "prod redaction control"
